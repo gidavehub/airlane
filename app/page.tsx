@@ -1,14 +1,14 @@
 'use client';
 
-// FIX: Ensured all necessary React hooks are imported. This resolves the error.
+// All necessary React hooks are correctly imported.
 import { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-// These imports assume your components are in a `components` directory.
+// Assuming your components are in a `components` directory.
 import { AgentDisplay } from '../components/AgentDisplay'; 
 import { NexusBar } from '../components/NexusBar'; 
 
 // ===================================================================================
-// TYPE DEFINITIONS: The language our app speaks
+// TYPE DEFINITIONS
 // ===================================================================================
 interface AgentResponse {
   id: string;
@@ -31,27 +31,39 @@ interface GeneratedCode {
   js: string;
 }
 
-// This type is defined here and used by both this page and your NexusBar component.
 export type ListeningStatus = 'idle' | 'recording' | 'transcribing';
 
 // ===================================================================================
-// THE MAIN PAGE: Our Stage for the Magic
+// THE MAIN PAGE COMPONENT
 // ===================================================================================
 export default function HederaAIPage() {
-  // --- STATE MANAGEMENT: The AI's Memory and Mood ---
-  const [activeResponse, setActiveResponse] = useState<AgentResponse | null>(null);
-  const [context, setContext] = useState<ConversationContext | null>(null); // FIX: Corrected typo 'useState'
+  // --- STATE MANAGEMENT ---
+  
+  // FIX: Initialize activeResponse with a loading state to prevent a blank screen on startup.
+  const [activeResponse, setActiveResponse] = useState<AgentResponse | null>({
+    id: 'initial_loading',
+    status: 'PROCESSING',
+    speech: 'Waking up the AI...',
+    ui: { type: 'LOADING' },
+    action: null,
+    context: { history: [], collected_info: {}, goal: null }
+  });
+
+  const [context, setContext] = useState<ConversationContext | null>(null);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(true); 
   const [listeningStatus, setListeningStatus] = useState<ListeningStatus>('idle');
+  
+  // This state is the trigger for the entire UI transformation
   const [generatedCode, setGeneratedCode] = useState<GeneratedCode | null>(null);
 
   // --- INITIALIZATION ---
   useEffect(() => {
+    // Start the conversation when the component mounts
     handleAgentCommunication('');
   }, []);
 
-  // --- CORE LOGIC: Communicating with the Agent's Brain (with your requested changes) ---
+  // --- CORE LOGIC: Communicating with the Agent ---
   const handleAgentCommunication = async (prompt: string, currentContext: ConversationContext | null = context) => {
     setIsLoading(true);
     setInputValue('');
@@ -59,15 +71,19 @@ export default function HederaAIPage() {
     const isEditMode = !!generatedCode;
     let apiRequestBody;
     
+    // Set a loading UI immediately for better responsiveness
+    if (!isEditMode && prompt) { // Don't replace the whole screen for the initial silent prompt
+        setActiveResponse({
+            id: `loading-${Date.now()}`, status: 'PROCESSING', speech: null,
+            ui: { type: 'LOADING' }, action: null, context: context || { history: [], collected_info: {}, goal: 'onboard_user' }
+        });
+    }
+
     if (isEditMode) {
       const editContext = { ...currentContext!, goal: 'edit_code' };
       apiRequestBody = { prompt, context: editContext, generatedCode };
     } else {
       apiRequestBody = { prompt, context: currentContext };
-      setActiveResponse({
-          id: `loading-${Date.now()}`, status: 'PROCESSING', speech: null,
-          ui: { type: 'LOADING' }, action: null, context: context || { history: [], collected_info: {}, goal: 'onboard_user' }
-      });
     }
 
     try {
@@ -77,7 +93,10 @@ export default function HederaAIPage() {
         body: JSON.stringify(apiRequestBody),
       });
 
-      if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`API Error ${response.status}: ${errorBody}`);
+      }
 
       const data: AgentResponse = await response.json();
       setActiveResponse(data);
@@ -89,9 +108,19 @@ export default function HederaAIPage() {
 
     } catch (error) {
       console.error("Failed to communicate with agent:", error);
+      // FIX: When an error occurs, set a response that has a visible UI element to explain the error.
       setActiveResponse({
-        id: 'error_state', status: 'ERROR', speech: "My apologies, I've encountered a connection issue. Please try again.",
-        ui: null, action: null, context: context || { history: [], collected_info: {}, goal: null }
+        id: 'error_state', status: 'ERROR', 
+        speech: "My apologies, I've encountered a connection issue.",
+        ui: { 
+          type: 'TEXT', 
+          props: {
+            title: 'Connection Error',
+            text: (error as Error).message
+          }
+        }, 
+        action: null, 
+        context: context || { history: [], collected_info: {}, goal: null }
       });
     } finally {
       setIsLoading(false);
@@ -109,15 +138,13 @@ export default function HederaAIPage() {
   const audioChunksRef = useRef<Blob[]>([]);
   const handleVoiceInteraction = async () => {
     if (listeningStatus === 'recording') {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-        mediaRecorderRef.current.stop();
-      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") mediaRecorderRef.current.stop();
     } else {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
         audioChunksRef.current = [];
-        mediaRecorderRef.current.ondataavailable = (event) => { audioChunksRef.current.push(event.data); };
+        mediaRecorderRef.current.ondataavailable = (event) => audioChunksRef.current.push(event.data);
         mediaRecorderRef.current.onstop = async () => {
           setListeningStatus('transcribing');
           const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
@@ -146,7 +173,9 @@ export default function HederaAIPage() {
       <PageStyles />
       <main className="main-container">
         <MagicalBackground />
+        
         <div className={`layout-container ${generatedCode ? 'workspace-view' : 'conversation-view'}`}>
+            
             <motion.div layout className="conversation-panel">
                 <AnimatePresence mode="wait">
                     {activeResponse && (
@@ -158,6 +187,7 @@ export default function HederaAIPage() {
                     )}
                 </AnimatePresence>
             </motion.div>
+
             <AnimatePresence>
             {generatedCode && (
                 <motion.div 
@@ -180,6 +210,7 @@ export default function HederaAIPage() {
             )}
             </AnimatePresence>
         </div>
+
         <div className="nexus-bar-container">
             <NexusBar
               value={inputValue}
@@ -196,7 +227,7 @@ export default function HederaAIPage() {
 }
 
 // ===================================================================================
-// STYLES: The Spellbook for our Magical UI
+// STYLES (Unchanged)
 // ===================================================================================
 const MagicalBackground = () => (
   <div className="magical-background-container">
@@ -263,6 +294,7 @@ const PageStyles = () => (
       -webkit-backdrop-filter: blur(12px);
       border: 1px solid rgba(255, 255, 255, 0.6);
       box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
     }
     .preview-header {
       padding: 1rem 1.5rem; border-bottom: 1px solid #e2e8f0;
