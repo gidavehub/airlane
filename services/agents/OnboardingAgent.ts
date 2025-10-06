@@ -22,31 +22,59 @@ interface ConversationContext {
 // ===================================================================================
 // GEMINI INITIALIZATION
 // ===================================================================================
+// Log the attempt to read the API key
+console.log('[Gemini Init] Attempting to initialize GoogleGenerativeAI...');
 if (!process.env.GEMINI_API_KEY) {
+  // Log a critical failure if the key is missing
+  console.error("[Gemini Init] ❌ CRITICAL ERROR: GEMINI_API_KEY is not set in environment variables. The application cannot proceed.");
   throw new Error("CRITICAL: GEMINI_API_KEY is not set in environment variables.");
 }
+// Log successful key retrieval and initialization
+console.log('[Gemini Init] ✅ GEMINI_API_KEY found. Initializing AI model.');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+console.log('[Gemini Init] ✅ Gemini Pro model ("gemini-2.0-flash") initialized successfully.');
+
 
 // ===================================================================================
 // THE ONBOARDING AGENT (UPGRADED)
 // ===================================================================================
 export class OnboardingAgent {
   public async execute(prompt: string, context: ConversationContext | null): Promise<AgentResponse> {
+    const executionId = `exec-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    console.log(`\n\n======================================================================`);
+    console.log(`[OnboardingAgent::execute][${executionId}] ==> Starting new execution.`);
+    console.log(`[OnboardingAgent::execute][${executionId}] Received prompt: "${prompt}"`);
+    console.log(`[OnboardingAgent::execute][${executionId}] Received context: ${context ? 'Exists' : 'null'}`);
+    if(context) {
+        console.debug(`[OnboardingAgent::execute][${executionId}] Full incoming context:`, JSON.stringify(context, null, 2));
+    }
+
+
     // --- Turn 0: The First Greeting ---
     if (!context) {
-      return this.initiateConversation();
+      console.log(`[OnboardingAgent::execute][${executionId}] Context is null. This is Turn 0. Initiating a new conversation.`);
+      return this.initiateConversation(executionId);
     }
 
     // --- Subsequent Turns: The Conversational Loop ---
     try {
+      console.log(`[OnboardingAgent::execute][${executionId}] Starting subsequent turn logic. Current state: ${context.onboarding_state}`);
+      
       const updatedHistory: [string, string][] = [...context.history, ['user', prompt]];
-      const systemPrompt = this.createSystemPrompt(updatedHistory, context.collected_info, context.onboarding_state);
+      console.log(`[OnboardingAgent::execute][${executionId}] History updated with new user prompt. History length is now ${updatedHistory.length}.`);
 
-      console.log(`[OnboardingAgent] Calling Gemini with state: ${context.onboarding_state}`);
+      const systemPrompt = this.createSystemPrompt(updatedHistory, context.collected_info, context.onboarding_state, executionId);
+      
+      console.log(`[OnboardingAgent::execute][${executionId}] [API_CALL_START] Calling Gemini model...`);
       const result = await geminiModel.generateContent(systemPrompt);
       const responseText = result.response.text();
-      const llmResponse = this.parseLlmResponse(responseText);
+      console.log(`[OnboardingAgent::execute][${executionId}] [API_CALL_END] Received response from Gemini.`);
+      console.debug(`[OnboardingAgent::execute][${executionId}] Raw response text from Gemini:\n---\n${responseText}\n---`);
+
+      const llmResponse = this.parseLlmResponse(responseText, executionId);
+      console.log(`[OnboardingAgent::execute][${executionId}] Successfully parsed LLM response.`);
+      console.debug(`[OnboardingAgent::execute][${executionId}] Parsed LLM response object:`, JSON.stringify(llmResponse, null, 2));
 
       const updatedContext: ConversationContext = {
         ...context,
@@ -54,12 +82,16 @@ export class OnboardingAgent {
         collected_info: { ...context.collected_info, ...llmResponse.updated_data },
         onboarding_state: llmResponse.next_state,
       };
+      console.log(`[OnboardingAgent::execute][${executionId}] New context created. State transition: ${context.onboarding_state} -> ${updatedContext.onboarding_state}.`);
+      console.debug(`[OnboardingAgent::execute][${executionId}] Full updated context:`, JSON.stringify(updatedContext, null, 2));
+
 
       if (llmResponse.next_state === 'FINALIZING') {
-        return this.generateCompletionResponse(updatedContext);
+        console.log(`[OnboardingAgent::execute][${executionId}] LLM transitioned to FINALIZING state. Generating completion response.`);
+        return this.generateCompletionResponse(updatedContext, executionId);
       }
 
-      return {
+      const agentResponse: AgentResponse = {
         id: `response-${Date.now()}`,
         status: 'AWAITING_INPUT',
         speech: llmResponse.speech,
@@ -68,28 +100,40 @@ export class OnboardingAgent {
         context: updatedContext,
       };
 
+      console.log(`[OnboardingAgent::execute][${executionId}] <== Returning standard 'AWAITING_INPUT' response.`);
+      console.log(`======================================================================\n`);
+      return agentResponse;
+
     } catch (error) {
-      console.error("[OnboardingAgent] Error during conversational loop:", error);
-      return {
+      console.error(`[OnboardingAgent::execute][${executionId}] ❌ CRITICAL ERROR during conversational loop:`, error);
+      const errorResponse: AgentResponse = {
         id: `error-${Date.now()}`,
-        status: 'AWAITING_INPUT',
+        status: 'AWAITING_INPUT', // Set to AWAITING_INPUT to allow user to retry
         speech: "My apologies, I seem to have lost my train of thought. Could you please repeat that or try rephrasing?",
         ui: null,
         action: { type: 'REQUEST_USER_INPUT' },
-        context,
+        context, // Return the last valid context
       };
+      console.log(`[OnboardingAgent::execute][${executionId}] <== Returning error recovery response to user.`);
+      console.log(`======================================================================\n`);
+      return errorResponse;
     }
   }
 
-  private initiateConversation(): AgentResponse {
+  private initiateConversation(executionId: string): AgentResponse {
+    console.log(`[OnboardingAgent::initiateConversation][${executionId}] ==> Generating initial greeting and context.`);
     const welcomeSpeech = "Hello! I'm your personal AI web designer and creative partner. I'm so excited to learn about your project! To start, what is the name of your business or project?";
+    
     const initialContext: ConversationContext = {
       history: [['agent', welcomeSpeech]],
       collected_info: {},
       goal: 'onboard_user',
       onboarding_state: 'GREETING',
     };
-    return {
+    console.log(`[OnboardingAgent::initiateConversation][${executionId}] Created initial context.`);
+    console.debug(`[OnboardingAgent::initiateConversation][${executionId}] Initial context object:`, JSON.stringify(initialContext, null, 2));
+
+    const initialResponse: AgentResponse = {
       id: `response-init-${Date.now()}`,
       status: 'AWAITING_INPUT',
       speech: welcomeSpeech,
@@ -105,10 +149,16 @@ export class OnboardingAgent {
       action: { type: 'REQUEST_USER_INPUT' },
       context: initialContext,
     };
+
+    console.log(`[OnboardingAgent::initiateConversation][${executionId}] <== Returning constructed initial AgentResponse.`);
+    return initialResponse;
   }
 
-  private createSystemPrompt(history: [string, string][], collectedData: any, currentState: string): string {
-    return `
+  private createSystemPrompt(history: [string, string][], collectedData: any, currentState: string, executionId: string): string {
+    console.log(`[OnboardingAgent::createSystemPrompt][${executionId}] ==> Constructing system prompt.`);
+    console.log(`[OnboardingAgent::createSystemPrompt][${executionId}] State: ${currentState}, Data Keys Collected: ${Object.keys(collectedData).join(', ') || 'None'}, History Length: ${history.length}`);
+    
+    const prompt = `
       You are an exceptionally friendly, insightful, and curious AI web designer, creative partner, and brand strategist. Your primary goal is to have a natural, human-like conversation with a user to truly understand the heart and soul of their business. You are not a robot filling out a form; you are a friend helping them bring their vision to life.
 
       **YOUR CORE DIRECTIVES:**
@@ -164,21 +214,32 @@ export class OnboardingAgent {
         "next_state": "CORE_INFO"
       }
     `;
+    console.debug(`[OnboardingAgent::createSystemPrompt][${executionId}] Full system prompt being generated:\n---\n${prompt}\n---`);
+    console.log(`[OnboardingAgent::createSystemPrompt][${executionId}] <== System prompt construction complete.`);
+    return prompt;
   }
 
-  private parseLlmResponse(responseText: string): { speech: string; ui: any; updated_data: any; next_state: any; } {
+  private parseLlmResponse(responseText: string, executionId: string): { speech: string; ui: any; updated_data: any; next_state: any; } {
+      console.log(`[OnboardingAgent::parseLlmResponse][${executionId}] ==> Attempting to parse LLM response text.`);
       try {
-          const cleanJson = responseText.replace(/^```json\n?/, '').replace(/```$/, '');
-          return JSON.parse(cleanJson);
+          // Clean up potential markdown code blocks around the JSON
+          const cleanJson = responseText.replace(/^```json\n?/, '').replace(/\n?```$/, '');
+          console.log(`[OnboardingAgent::parseLlmResponse][${executionId}] Cleaned potential markdown from JSON string.`);
+          const parsedJson = JSON.parse(cleanJson);
+          console.log(`[OnboardingAgent::parseLlmResponse][${executionId}] <== Successfully parsed JSON.`);
+          return parsedJson;
       } catch (error) {
-          console.error("Failed to parse LLM JSON response:", responseText, error);
+          console.error(`[OnboardingAgent::parseLlmResponse][${executionId}] ❌ FAILED to parse LLM JSON response. Raw text was:`, responseText, 'Error:', error);
+          // This error will be caught by the main execute loop's try/catch block
           throw new Error("Invalid JSON response from language model.");
       }
   }
 
-  private generateCompletionResponse(context: ConversationContext): AgentResponse {
+  private generateCompletionResponse(context: ConversationContext, executionId: string): AgentResponse {
+    console.log(`[OnboardingAgent::generateCompletionResponse][${executionId}] ==> Generating completion response.`);
     const finalSpeech = `Amazing! Thank you for sharing all of that. I feel like I really get what you're building, and I have a clear vision for your project now. I'll start designing and building your new landing page right away. This should just take a moment...`;
-    return {
+    
+    const finalResponse: AgentResponse = {
       id: `response-complete-${Date.now()}`,
       status: 'PROCESSING',
       speech: finalSpeech,
@@ -200,5 +261,9 @@ export class OnboardingAgent {
         onboarding_state: 'FINALIZING',
       },
     };
+    console.log(`[OnboardingAgent::generateCompletionResponse][${executionId}] <== Constructed completion response object. Goal changed to 'generate_landing_page'.`);
+    console.debug(`[OnboardingAgent::generateCompletionResponse][${executionId}] Completion response:`, JSON.stringify(finalResponse, null, 2));
+
+    return finalResponse;
   }
 }
