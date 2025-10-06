@@ -39,7 +39,7 @@ export type ListeningStatus = 'idle' | 'recording' | 'transcribing';
 export default function HederaAIPage() {
   // --- STATE MANAGEMENT ---
   
-  // FIX: Initialize activeResponse with a loading state to prevent a blank screen on startup.
+  // Initialize activeResponse with a loading state to prevent a blank screen on startup.
   const [activeResponse, setActiveResponse] = useState<AgentResponse | null>({
     id: 'initial_loading',
     status: 'PROCESSING',
@@ -108,7 +108,7 @@ export default function HederaAIPage() {
 
     } catch (error) {
       console.error("Failed to communicate with agent:", error);
-      // FIX: When an error occurs, set a response that has a visible UI element to explain the error.
+      // When an error occurs, set a response that has a visible UI element to explain the error.
       setActiveResponse({
         id: 'error_state', status: 'ERROR', 
         speech: "My apologies, I've encountered a connection issue.",
@@ -227,7 +227,7 @@ export default function HederaAIPage() {
 }
 
 // ===================================================================================
-// STYLES (Unchanged)
+// STYLES
 // ===================================================================================
 const MagicalBackground = () => (
   <div className="magical-background-container">
@@ -262,12 +262,27 @@ const PageStyles = () => (
       border-radius: 9999px; filter: blur(64px); opacity: 0.5;
       animation: pulse-slow 20s cubic-bezier(0.4, 0, 0.6, 1) infinite; animation-delay: -7s;
     }
+    
+    /* --- CORRECTED STYLES START HERE --- */
+    
     .layout-container {
-      flex-grow: 1; display: flex;
+      flex-grow: 1; 
+      display: flex;
       padding: 1rem;
-      padding-bottom: 8rem; /* Space for the NexusBar */
+      /* Removed padding-bottom hack, flexbox will handle the spacing */
       transition: all 0.7s cubic-bezier(0.65, 0, 0.35, 1);
+      overflow-y: auto; /* Good practice for content that might overflow */
     }
+    
+    /* --- THIS IS THE MAIN FIX --- */
+    /* nexus-bar-container is now a regular flex item, not absolutely positioned */
+    .nexus-bar-container {
+      padding: 1.5rem 1rem;
+      z-index: 20;
+    }
+
+    /* --- ALL OTHER STYLES REMAIN THE SAME --- */
+
     .layout-container.conversation-view {
       align-items: center; justify-content: center;
     }
@@ -306,10 +321,6 @@ const PageStyles = () => (
     .preview-iframe {
       width: 100%; height: 100%; border: none; background: white;
       border-radius: 1.25rem;
-    }
-    .nexus-bar-container {
-      position: absolute; bottom: 0; left: 0; right: 0;
-      padding: 1.5rem 1rem; z-index: 20;
     }
   `}</style>
 );
