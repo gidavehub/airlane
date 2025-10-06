@@ -30,7 +30,7 @@ if (!process.env.GEMINI_API_KEY) {
 }
 console.log("[GEMINI_INIT] Initializing GoogleGenerativeAI client...");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 console.log("[GEMINI_INIT] Gemini model 'gemini-1.5-flash' loaded successfully.");
 
 
